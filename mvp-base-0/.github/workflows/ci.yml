@@ -1,0 +1,172 @@
+# .github/workflows/ci.yml
+#
+# Continuous Integration & Delivery pipeline for DocVerify
+#
+# Triggers:
+#   • push / pull_request on main and develop branches
+#
+# Jobs:
+#   backend-test  – install deps, run Jest suite
+#   frontend-build – install deps, production build
+#   on push to main only:
+#   deploy         – placeholder step (adapt to your hosting target)
+
+name: CI / CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Job 1: Backend — lint + test
+  # --------------------------------------------------------------------------
+  backend-test:
+    name: Backend — Jest Tests
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: verifier-backend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: verifier-backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Jest test suite
+        run: npm test
+        env:
+          # Provide minimal env for tests (real secrets not needed — mocks kick in)
+          NODE_ENV: test
+          MONGO_URI: mongodb://localhost:27017/docverify_test
+          JWT_SECRET: test_secret_ci
+          ADMIN_PASSWORD: test_pass_ci
+
+  # --------------------------------------------------------------------------
+  # Job 2: Frontend — build
+  # --------------------------------------------------------------------------
+  frontend-build:
+    name: Frontend — React Build
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: verifier-client
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: verifier-client/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: React production build
+        run: npm run build
+        env:
+          CI: false  # Treat warnings as notes, not errors
+          REACT_APP_CONTRACT_ADDRESS: ${{ secrets.REACT_APP_CONTRACT_ADDRESS || '0x0000000000000000000000000000000000000000' }}
+          REACT_APP_API_URL: ${{ secrets.REACT_APP_API_URL || 'http://localhost:5000' }}
+
+      - name: Upload build artifact
+        # Only upload on pushes to main (not PRs) to save storage
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: react-build
+          path: verifier-client/build/
+          retention-days: 7
+
+  # --------------------------------------------------------------------------
+  # Job 3: Hardhat — compile + test (Solidity)
+  # --------------------------------------------------------------------------
+  hardhat-test:
+    name: Hardhat — Solidity Tests
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: hardhat
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: hardhat/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile contracts
+        run: npx hardhat compile
+
+      - name: Run Hardhat tests
+        run: npx hardhat test
+
+  # --------------------------------------------------------------------------
+  # Job 4: Deploy — only on push to main (all jobs must pass)
+  # --------------------------------------------------------------------------
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [backend-test, frontend-build, hardhat-test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download React build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: react-build
+          path: verifier-client/build/
+
+      # -----------------------------------------------------------------------
+      # Replace this step with your actual deployment target.
+      # Examples:
+      #   - SSH into a VPS and rsync files
+      #   - Deploy to Vercel / Netlify
+      #   - Push Docker image to registry and trigger re-deploy
+      # -----------------------------------------------------------------------
+      - name: Deploy (placeholder — adapt to your hosting target)
+        run: |
+          echo "=== Deployment step ==="
+          echo "Backend: copy verifier-backend/ to server, run 'npm ci --production && pm2 reload server'"
+          echo "Frontend: copy verifier-client/build/ to /var/www/docverify/html/"
+          echo "Replace this step with SSH, rsync, Docker push, or cloud provider CLI"
+        # Example SSH deploy (uncomment and adapt):
+        # env:
+        #   SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        # run: |
+        #   echo "$SSH_KEY" > /tmp/deploy_key && chmod 600 /tmp/deploy_key
+        #   rsync -az -e "ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no" \
+        #     verifier-client/build/ deployer@${{ secrets.DEPLOY_HOST }}:/var/www/docverify/html/
+        #   ssh -i /tmp/deploy_key deployer@${{ secrets.DEPLOY_HOST }} \
+        #     "cd /opt/docverify && git pull && npm ci --production && pm2 reload server"

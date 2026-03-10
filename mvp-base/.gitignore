@@ -1,0 +1,75 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Environment variables (contain sensitive credentials)
+.env
+.env.local
+.env.*.local
+.env.production.local
+.env.development.local
+.env.test.local
+
+# Build and distribution directories
+build/
+dist/
+out/
+.next/
+
+# Smart contract artifacts (auto-generated)
+artifacts/
+cache/
+
+# IDE and editor configurations
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+*~
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# React specific
+.eslintcache
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# IDE backup files
+*.bak
+*.swp
+
+# Temporary files
+tmp/
+temp/
+
+# Package manager lock files (optional - uncomment if you want each developer to manage their own versions)
+# pnpm-lock.yaml
+
+# TypeScript
+*.tsbuildinfo
+
+# Hardhat and blockchain testing
+.hardhat_artifacts/
+.openzeppelin/
+
+# block details
+details.txt
