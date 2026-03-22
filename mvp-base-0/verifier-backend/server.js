@@ -1,4 +1,4 @@
-﻿require('dotenv').config();
+require('dotenv').config();
 const express   = require('express');
 const mongoose  = require('mongoose');
 const cors      = require('cors');
@@ -14,8 +14,21 @@ const { requireAuth, loginHandler }       = require('./middleware/auth');
 const app = express();
 
 // --- CORS Configuration ------------------------------------------------------
+const allowedOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map(origin => origin.trim())
+  : ['http://localhost:3000', 'http://localhost:3001'];
+
 const corsOptions = {
-  origin: ['http://localhost:3000', 'http://localhost:3001'],
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, curl)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      callback(null, true);
+    } else {
+      callback(new Error(`Origin ${origin} not allowed by CORS`));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -31,7 +44,12 @@ const generalLimiter = rateLimit({
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Too many requests – please try again later.' }
+  // Ensure CORS headers are still sent on rate-limit rejection responses
+  handler: (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.status(429).json({ error: 'Too many requests – please try again later.' });
+  }
 });
 
 // AI analysis routes: expensive – 20 req / 15 min per IP
@@ -40,7 +58,12 @@ const analyzeLimiter = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'AI analysis rate limit exceeded – please wait before submitting another file.' }
+  // Ensure CORS headers are still sent on rate-limit rejection responses
+  handler: (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.status(429).json({ error: 'AI analysis rate limit exceeded – please wait before submitting another file.' });
+  }
 });
 
 app.use('/api', generalLimiter);
@@ -125,12 +148,36 @@ app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (req, res)
 app.post('/api/auth/login', loginHandler);
 
 // --- GET /api/health ---------------------------------------------------------
-app.get('/api/health', (_req, res) => {
-  res.json({
+app.get('/api/health', async (_req, res) => {
+  const health = {
     status: 'ok',
-    mongo:  mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    uptime: Math.floor(process.uptime())
-  });
+    timestamp: new Date().toISOString(),
+    uptime: Math.floor(process.uptime()),
+    environment: process.env.NODE_ENV || 'development',
+    mongodb: {
+      status: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+      readyState: mongoose.connection.readyState,
+      host: mongoose.connection.host || 'unknown',
+      name: mongoose.connection.name || 'unknown'
+    },
+    services: {
+      ai: !!process.env.AI_API_KEY,
+      ipfs: !!(process.env.PINATA_API_KEY && process.env.PINATA_SECRET_KEY),
+      fabric: process.env.FABRIC_ENABLED === 'true'
+    },
+    memory: {
+      used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+      total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
+      rss: Math.round(process.memoryUsage().rss / 1024 / 1024)
+    }
+  };
+
+  // Return 503 Service Unavailable if MongoDB is not connected
+  if (health.mongodb.status !== 'connected') {
+    return res.status(503).json({ ...health, status: 'unhealthy' });
+  }
+
+  res.json(health);
 });
 
 // --- GET /api/document/:hash -------------------------------------------------
@@ -167,6 +214,22 @@ if (require.main === module) {
     console.log(`  Pinata    : ${process.env.PINATA_API_KEY ? 'configured' : 'no key -- IPFS disabled'}\n`);
   });
 }
+
+// --- Global error handler (must be last, after all routes) ------------------
+// Ensures CORS headers are always present, even when Express catches an error
+// (e.g. multer rejects an oversized file, rate limiter custom handler throws, etc.)
+// Without this the browser sees a CORS error instead of the real status code.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && corsOptions.origin.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  console.error('[Global Error Handler]', err.message);
+  const status = err.status || err.statusCode || 500;
+  res.status(status).json({ error: err.message || 'Internal server error.' });
+});
 
 // Export for integration tests (Jest imports this without triggering listen)
 module.exports = app;
