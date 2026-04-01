@@ -91,44 +91,68 @@ describe("DocVerifier", function () {
   // ─── revokeDocument ───────────────────────────────────────────────────────
 
   describe("revokeDocument", function () {
-    it("owner can revoke a registered document", async function () {
-      const { contract, owner, issuer } = await loadFixture(deployFixture);
+    it("issuer can revoke their own document", async function () {
+      const { contract, issuer } = await loadFixture(deployFixture);
       await contract.connect(issuer).anchorDocument(SAMPLE_HASH, SAMPLE_IPFS);
-      await expect(contract.connect(owner).revokeDocument(SAMPLE_HASH))
+      await expect(contract.connect(issuer).revokeDocument(SAMPLE_HASH))
         .to.emit(contract, "DocumentRevoked")
-        .withArgs(SAMPLE_HASH, owner.address);
+        .withArgs(SAMPLE_HASH, issuer.address);
     });
 
     it("sets revoked flag to true after revocation", async function () {
-      const { contract, owner, issuer } = await loadFixture(deployFixture);
+      const { contract, issuer } = await loadFixture(deployFixture);
       await contract.connect(issuer).anchorDocument(SAMPLE_HASH, SAMPLE_IPFS);
-      await contract.connect(owner).revokeDocument(SAMPLE_HASH);
+      await contract.connect(issuer).revokeDocument(SAMPLE_HASH);
       expect(await contract.isRevoked(SAMPLE_HASH)).to.be.true;
     });
 
-    it("reverts when a non-owner tries to revoke", async function () {
+    it("reverts when a non-issuer tries to revoke", async function () {
       const { contract, issuer, stranger } = await loadFixture(deployFixture);
       await contract.connect(issuer).anchorDocument(SAMPLE_HASH, SAMPLE_IPFS);
       await expect(
         contract.connect(stranger).revokeDocument(SAMPLE_HASH)
-      ).to.be.revertedWith("Not the contract owner.");
+      ).to.be.revertedWith("Only the document issuer can revoke.");
     });
 
     it("reverts when revoking an already-revoked document", async function () {
-      const { contract, owner, issuer } = await loadFixture(deployFixture);
+      const { contract, issuer } = await loadFixture(deployFixture);
       await contract.connect(issuer).anchorDocument(SAMPLE_HASH, SAMPLE_IPFS);
-      await contract.connect(owner).revokeDocument(SAMPLE_HASH);
+      await contract.connect(issuer).revokeDocument(SAMPLE_HASH);
       await expect(
-        contract.connect(owner).revokeDocument(SAMPLE_HASH)
+        contract.connect(issuer).revokeDocument(SAMPLE_HASH)
       ).to.be.revertedWith("Document already revoked.");
     });
 
     it("reverts when revoking a hash that was never anchored", async function () {
-      const { contract, owner } = await loadFixture(deployFixture);
+      const { contract, issuer } = await loadFixture(deployFixture);
       const unregistered = ethers.keccak256(ethers.toUtf8Bytes("never-registered"));
       await expect(
-        contract.connect(owner).revokeDocument(unregistered)
+        contract.connect(issuer).revokeDocument(unregistered)
       ).to.be.revertedWith("Document not found.");
+    });
+
+    it("owner cannot revoke documents issued by others", async function () {
+      const { contract, owner, issuer } = await loadFixture(deployFixture);
+      await contract.connect(issuer).anchorDocument(SAMPLE_HASH, SAMPLE_IPFS);
+      await expect(
+        contract.connect(owner).revokeDocument(SAMPLE_HASH)
+      ).to.be.revertedWith("Only the document issuer can revoke.");
+    });
+
+    it("multiple issuers can each revoke their own documents", async function () {
+      const { contract, issuer, stranger } = await loadFixture(deployFixture);
+      const hash1 = ethers.keccak256(ethers.toUtf8Bytes("doc-1"));
+      const hash2 = ethers.keccak256(ethers.toUtf8Bytes("doc-2"));
+
+      await contract.connect(issuer).anchorDocument(hash1, SAMPLE_IPFS);
+      await contract.connect(stranger).anchorDocument(hash2, SAMPLE_IPFS);
+
+      // Each can revoke their own
+      await expect(contract.connect(issuer).revokeDocument(hash1)).to.not.be.reverted;
+      await expect(contract.connect(stranger).revokeDocument(hash2)).to.not.be.reverted;
+
+      expect(await contract.isRevoked(hash1)).to.be.true;
+      expect(await contract.isRevoked(hash2)).to.be.true;
     });
   });
 
@@ -220,21 +244,19 @@ describe("DocVerifier", function () {
     });
 
     it("new owner can exercise owner-only functions after transfer", async function () {
-      const { contract, owner, issuer, stranger } = await loadFixture(deployFixture);
+      const { contract, owner, stranger } = await loadFixture(deployFixture);
       await contract.connect(owner).transferOwnership(stranger.address);
-      await contract.connect(issuer).anchorDocument(SAMPLE_HASH, SAMPLE_IPFS);
-      // stranger is now owner and should be able to revoke
+      // stranger is now owner and should be able to pause
       await expect(
-        contract.connect(stranger).revokeDocument(SAMPLE_HASH)
+        contract.connect(stranger).pause()
       ).to.not.be.reverted;
     });
 
     it("previous owner loses owner-only access after transfer", async function () {
-      const { contract, owner, issuer, stranger } = await loadFixture(deployFixture);
-      await contract.connect(issuer).anchorDocument(SAMPLE_HASH, SAMPLE_IPFS);
+      const { contract, owner, stranger } = await loadFixture(deployFixture);
       await contract.connect(owner).transferOwnership(stranger.address);
       await expect(
-        contract.connect(owner).revokeDocument(SAMPLE_HASH)
+        contract.connect(owner).pause()
       ).to.be.revertedWith("Not the contract owner.");
     });
 

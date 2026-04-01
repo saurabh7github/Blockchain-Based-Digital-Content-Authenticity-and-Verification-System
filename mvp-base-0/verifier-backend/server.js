@@ -5,6 +5,7 @@ const cors      = require('cors');
 const multer    = require('multer');
 const crypto    = require('crypto');
 const rateLimit = require('express-rate-limit');
+const promClient = require('prom-client');
 
 const { getThreshold, checkAuthenticity } = require('./lib/aiCheck');
 const { pinToIPFS }                       = require('./lib/ipfs');
@@ -12,6 +13,78 @@ const DocModel                            = require('./models/Document');
 const { requireAuth, loginHandler }       = require('./middleware/auth');
 
 const app = express();
+
+// --- Prometheus Metrics Setup -------------------------------------------------
+// Create separate registry to avoid conflicts
+const register = new promClient.Registry();
+
+// Collect default metrics (CPU, memory, GC, etc.)
+promClient.collectDefaultMetrics({ register });
+
+// Custom metrics
+const httpRequestsTotal = new promClient.Counter({
+  name: 'http_requests_total',
+  help: 'Total HTTP requests',
+  labelNames: ['method', 'path', 'status'],
+  registers: [register]
+});
+
+const httpRequestDuration = new promClient.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'HTTP request duration in seconds',
+  labelNames: ['method', 'path', 'status'],
+  buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10],
+  registers: [register]
+});
+
+const documentsAnchoredTotal = new promClient.Counter({
+  name: 'fabric_documents_anchored_total',
+  help: 'Total number of documents anchored on Fabric',
+  labelNames: ['organization', 'status'],
+  registers: [register]
+});
+
+const documentAnalysisCounter = new promClient.Counter({
+  name: 'document_analysis_total',
+  help: 'Total document analysis requests',
+  labelNames: ['ai_provider', 'result'],
+  registers: [register]
+});
+
+const aiCheckDuration = new promClient.Histogram({
+  name: 'ai_check_duration_seconds',
+  help: 'AI authenticity check duration',
+  labelNames: ['ai_engine'],
+  buckets: [0.1, 0.5, 1, 2, 5, 10, 30],
+  registers: [register]
+});
+
+const chaincodeInvocationDuration = new promClient.Histogram({
+  name: 'fabric_chaincode_invocation_duration_seconds',
+  help: 'Fabric chaincode invocation duration',
+  labelNames: ['function', 'status'],
+  buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10],
+  registers: [register]
+});
+
+// Middleware to track HTTP requests
+app.use((req, res, next) => {
+  const start = Date.now();
+  const originalSend = res.send;
+
+  res.send = function(data) {
+    const duration = (Date.now() - start) / 1000;
+    const path = req.route?.path || req.path;
+
+    httpRequestsTotal.labels(req.method, path, res.statusCode).inc();
+    httpRequestDuration.labels(req.method, path, res.statusCode).observe(duration);
+
+    res.send = originalSend;
+    return res.send(data);
+  };
+
+  next();
+});
 
 // --- CORS Configuration ------------------------------------------------------
 const allowedOrigins = process.env.CORS_ORIGINS
@@ -91,6 +164,17 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }
 });
 
+// --- Prometheus /metrics endpoint --------------------------------------------
+app.get('/metrics', async (req, res) => {
+  try {
+    res.set('Content-Type', register.contentType);
+    res.end(await register.metrics());
+  } catch (err) {
+    console.error('/metrics error:', err);
+    res.status(500).json({ error: 'Failed to gather metrics' });
+  }
+});
+
 // --- POST /api/analyze -------------------------------------------------------
 app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (req, res) => {
   try {
@@ -103,9 +187,16 @@ app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (req, res)
     // A. SHA-256 hash
     const docHash = '0x' + crypto.createHash('sha256').update(fileBuffer).digest('hex');
 
-    // B. AI check with per-type threshold
+    // B. AI check with per-type threshold (track timing)
     const threshold = getThreshold(mimeType);
+    const aiStartTime = Date.now();
     const aiResult  = await checkAuthenticity(fileBuffer, fileName, mimeType);
+    const aiDuration = (Date.now() - aiStartTime) / 1000;
+
+    // Track AI check metrics
+    const aiEngine = process.env.AI_ENGINE || 'mock';
+    aiCheckDuration.labels(aiEngine).observe(aiDuration);
+    documentAnalysisCounter.labels(aiResult.provider, aiResult.score > threshold ? 'rejected' : 'passed').inc();
 
     if (aiResult.score > threshold) {
       return res.status(400).json({
@@ -172,12 +263,52 @@ app.get('/api/health', async (_req, res) => {
     }
   };
 
+  // Test Fabric gateway connectivity if enabled
+  if (process.env.FABRIC_ENABLED === 'true') {
+    try {
+      const { getContract } = require('./fabric/gateway');
+      const contract = await getContract();
+
+      // Call GetNetworkState as a lightweight connectivity test
+      const resultBytes = await contract.evaluateTransaction('GetNetworkState');
+      const networkState = JSON.parse(Buffer.from(resultBytes).toString());
+
+      health.fabric = {
+        enabled: true,
+        gateway: 'connected',
+        chaincode: 'available',
+        channel: process.env.FABRIC_CHANNEL || 'mychannel',
+        peer: process.env.FABRIC_PEER_ENDPOINT || 'localhost:7051',
+        networkState: {
+          paused: networkState.paused,
+          owner: networkState.owner
+        }
+      };
+    } catch (err) {
+      health.fabric = {
+        enabled: true,
+        gateway: 'error',
+        error: err.message,
+        channel: process.env.FABRIC_CHANNEL || 'mychannel',
+        peer: process.env.FABRIC_PEER_ENDPOINT || 'localhost:7051'
+      };
+      health.status = 'degraded';
+      console.warn('[Fabric] Health check failed:', err.message);
+    }
+  } else {
+    health.fabric = {
+      enabled: false
+    };
+  }
+
   // Return 503 Service Unavailable if MongoDB is not connected
   if (health.mongodb.status !== 'connected') {
     return res.status(503).json({ ...health, status: 'unhealthy' });
   }
 
-  res.json(health);
+  // Return 200 with degraded status if Fabric is down (but MongoDB is up)
+  const statusCode = health.status === 'degraded' ? 200 : 200;
+  res.status(statusCode).json(health);
 });
 
 // --- GET /api/document/:hash -------------------------------------------------

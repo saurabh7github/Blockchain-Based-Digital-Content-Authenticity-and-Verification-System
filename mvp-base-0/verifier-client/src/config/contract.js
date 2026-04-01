@@ -5,7 +5,7 @@
 // Network  : Ethereum Sepolia Testnet
 // Features : anchorDocument · verifyDocument · isRevoked · revokeDocument
 
-export const CONTRACT_ADDRESS = "0x83ed6653dB8c25Bacebf6B3110e352bfE6F9196c";
+export const CONTRACT_ADDRESS = "0x66DDBF0516100F3b4717e62b5068D5b7473E1418";
 
 // Public Sepolia JSON-RPC endpoint used as a read-only fallback
 // when MetaMask is not available (e.g. during verification).

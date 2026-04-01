@@ -1,0 +1,165 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'docverifier-fabric-network'
+    environment: 'production'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+rule_files:
+  - '/etc/prometheus/alerts.yml'
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Orderer 0 (Raft leader tracking)
+  - job_name: 'orderer0'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['orderer0.example.com:17050']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: service
+        replacement: 'orderer'
+      - target_label: organization
+        replacement: 'OrdererOrg'
+      - target_label: orderer_id
+        replacement: '0'
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: '(broadcast_.*|consensus_.*|ledger_.*|go_memory.*|go_goroutines)'
+        action: keep
+
+  # Orderer 1 (Raft follower)
+  - job_name: 'orderer1'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['orderer1.example.com:18050']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: service
+        replacement: 'orderer'
+      - target_label: organization
+        replacement: 'OrdererOrg'
+      - target_label: orderer_id
+        replacement: '1'
+
+  # Orderer 2 (Raft follower)
+  - job_name: 'orderer2'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['orderer2.example.com:19050']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: service
+        replacement: 'orderer'
+      - target_label: organization
+        replacement: 'OrdererOrg'
+      - target_label: orderer_id
+        replacement: '2'
+
+  # Peer 0 - Org1 (HA peer tracking)
+  - job_name: 'peer-org1'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['peer0.org1.example.com:17051']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: service
+        replacement: 'peer'
+      - target_label: organization
+        replacement: 'Org1MSP'
+      - target_label: peer_id
+        replacement: '0'
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: '(endorsement_.*|chaincode_.*|ledger_.*|go_memory.*|go_goroutines|grpc_.*)'
+        action: keep
+
+  # Peer 0 - Org2
+  - job_name: 'peer-org2'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['peer0.org2.example.com:18051']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: service
+        replacement: 'peer'
+      - target_label: organization
+        replacement: 'Org2MSP'
+      - target_label: peer_id
+        replacement: '0'
+
+  # Peer 0 - Org3
+  - job_name: 'peer-org3'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['peer0.org3.example.com:19051']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: service
+        replacement: 'peer'
+      - target_label: organization
+        replacement: 'Org3MSP'
+      - target_label: peer_id
+        replacement: '0'
+
+  # Backend API
+  - job_name: 'backend-api'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['localhost:5000']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: service
+        replacement: 'backend'
+      - target_label: application
+        replacement: 'docverifier-api'
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: '(fabric_.*|http_.*|process_.*|nodejs_.*|go_memory.*|go_goroutines)'
+        action: keep
+
+  # NodeExporter (System resources)
+  - job_name: 'node-exporter'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['node-exporter:9100']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: service
+        replacement: 'system'
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: '(node_cpu.*|node_memory.*|node_disk.*|node_network.*|node_filesystem.*|node_load.*|up)'
+        action: keep
+
+  # CouchDB monitoring (optional, if CouchDB exposes metrics)
+  - job_name: 'couchdb'
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - 'localhost:5984'
+          - 'localhost:6984'
+          - 'localhost:7984'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: service
+        replacement: 'couchdb'

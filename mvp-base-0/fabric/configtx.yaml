@@ -21,7 +21,9 @@ Organizations:
         Type: Signature
         Rule: "OR('OrdererMSP.admin')"
     OrdererEndpoints:
-      - orderer.example.com:7050
+      - orderer0.example.com:7050
+      - orderer1.example.com:8050
+      - orderer2.example.com:9050
 
   - &Org1
     Name: Org1MSP
@@ -43,6 +45,48 @@ Organizations:
     AnchorPeers:
       - Host: peer0.org1.example.com
         Port: 7051
+
+  - &Org2
+    Name: Org2MSP
+    ID: Org2MSP
+    MSPDir: crypto-config/peerOrganizations/org2.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('Org2MSP.admin', 'Org2MSP.peer', 'Org2MSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('Org2MSP.admin', 'Org2MSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('Org2MSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('Org2MSP.peer')"
+    AnchorPeers:
+      - Host: peer0.org2.example.com
+        Port: 8051
+
+  - &Org3
+    Name: Org3MSP
+    ID: Org3MSP
+    MSPDir: crypto-config/peerOrganizations/org3.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('Org3MSP.admin', 'Org3MSP.peer', 'Org3MSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('Org3MSP.admin', 'Org3MSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('Org3MSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('Org3MSP.peer')"
+    AnchorPeers:
+      - Host: peer0.org3.example.com
+        Port: 9051
 
 ################################################################################
 # Capabilities
@@ -80,18 +124,34 @@ Application: &ApplicationDefaults
     <<: *ApplicationCapabilities
 
 ################################################################################
-# Orderer defaults  (Raft, single node)
+# Orderer defaults  (Raft, 3-node cluster for production)
 ################################################################################
 Orderer: &OrdererDefaults
   OrdererType: etcdraft
   Addresses:
-    - orderer.example.com:7050
+    - orderer0.example.com:7050
+    - orderer1.example.com:8050
+    - orderer2.example.com:9050
   EtcdRaft:
     Consenters:
-      - Host: orderer.example.com
+      - Host: orderer0.example.com
         Port: 7050
-        ClientTLSCert: crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
-        ServerTLSCert: crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
+        ClientTLSCert: crypto-config/ordererOrganizations/example.com/orderers/orderer0.example.com/tls/server.crt
+        ServerTLSCert: crypto-config/ordererOrganizations/example.com/orderers/orderer0.example.com/tls/server.crt
+      - Host: orderer1.example.com
+        Port: 8050
+        ClientTLSCert: crypto-config/ordererOrganizations/example.com/orderers/orderer1.example.com/tls/server.crt
+        ServerTLSCert: crypto-config/ordererOrganizations/example.com/orderers/orderer1.example.com/tls/server.crt
+      - Host: orderer2.example.com
+        Port: 9050
+        ClientTLSCert: crypto-config/ordererOrganizations/example.com/orderers/orderer2.example.com/tls/server.crt
+        ServerTLSCert: crypto-config/ordererOrganizations/example.com/orderers/orderer2.example.com/tls/server.crt
+    Options:
+      TickInterval: 500ms
+      ElectionTick: 10
+      HeartbeatTick: 1
+      MaxInflightBlocks: 5
+      SnapshotIntervalSize: 16 MB
   BatchTimeout: 500ms
   BatchSize:
     MaxMessageCount: 100
@@ -136,7 +196,7 @@ Channel: &ChannelDefaults
 ################################################################################
 Profiles:
 
-  # Used to generate the genesis block (channel genesis via osadmin API, Fabric 2.5)
+  # DEPRECATED: Used for single-org development (backward compatibility)
   OneOrgOrdererGenesis:
     <<: *ChannelDefaults
     Orderer:
@@ -148,8 +208,7 @@ Profiles:
         Organizations:
           - *Org1
 
-  # Used to generate the APPLICATION channel genesis block (Fabric 2.5 no-system-channel mode).
-  # osnadmin channel join requires a block with BOTH Orderer AND Application groups.
+  # DEPRECATED: Used for single-org development (backward compatibility)
   OneOrgChannel:
     <<: *ChannelDefaults
     Orderer:
@@ -162,5 +221,37 @@ Profiles:
       <<: *ApplicationDefaults
       Organizations:
         - *Org1
+      Capabilities:
+        <<: *ApplicationCapabilities
+
+  # PRODUCTION: Multi-org consortium with 3 organizations and 3-node Raft cluster
+  ThreeOrgOrdererGenesis:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+      Organizations:
+        - *OrdererOrg
+    Consortiums:
+      DocVerifierConsortium:
+        Organizations:
+          - *Org1
+          - *Org2
+          - *Org3
+
+  # PRODUCTION: Application channel for multi-org document verification
+  ThreeOrgChannel:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+      Organizations:
+        - *OrdererOrg
+      Capabilities:
+        <<: *OrdererCapabilities
+    Application:
+      <<: *ApplicationDefaults
+      Organizations:
+        - *Org1
+        - *Org2
+        - *Org3
       Capabilities:
         <<: *ApplicationCapabilities

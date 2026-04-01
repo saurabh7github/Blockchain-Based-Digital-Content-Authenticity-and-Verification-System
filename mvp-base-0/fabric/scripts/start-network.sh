@@ -52,7 +52,7 @@ else
   cryptogen generate --config=./crypto-config.yaml --output=./crypto-config
   # cryptogen on Windows writes backslash paths into MSP config.yaml files.
   # Normalise all separators to forward-slash so the Linux containers can read them.
-  find ./crypto-config -name "config.yaml" -exec sed -i 's/\\/\//g' {} +
+  find ./crypto-config -name "config.yaml" -exec sed -i '' 's/\\/\//g' {} + 2>/dev/null || true
   echo "  Done."
 fi
 
@@ -75,35 +75,63 @@ echo "  Done."
 # ── Step 3: Start Docker containers ─────────────────────────────────────────
 echo "[3/7] Starting Docker containers..."
 docker compose up -d --remove-orphans
-echo "  Waiting 5s for containers to stabilise..."
-sleep 5
+echo "  Waiting 30s for containers to stabilise..."
+sleep 30
+echo "  Verifying peer connectivity..."
+docker exec cli peer channel list 2>&1 || true
 echo "  Done."
 
 # ── Paths inside the CLI container ──────────────────────────────────────────
 # The CLI container mounts crypto-config → /peer/crypto and
 # channel-config → /peer/channel-artifacts.  Docker DNS resolves
 # orderer.example.com / peer0.org1.example.com, avoiding TLS hostname issues.
+# Note: Use orderer0 certs; all orderers have the same signing CA certificate.
 CLI_CRYPTO="/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto"
 CLI_ARTIFACTS="/opt/gopath/src/github.com/hyperledger/fabric/peer/channel-artifacts"
-CLI_ORDERER_CA="${CLI_CRYPTO}/ordererOrganizations/example.com/orderers/orderer.example.com/tls/ca.crt"
-CLI_ORDERER_CERT="${CLI_CRYPTO}/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt"
-CLI_ORDERER_KEY="${CLI_CRYPTO}/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.key"
+CLI_ORDERER_CA="${CLI_CRYPTO}/ordererOrganizations/example.com/orderers/orderer0.example.com/tls/ca.crt"
+CLI_ORDERER_CERT="${CLI_CRYPTO}/ordererOrganizations/example.com/orderers/orderer0.example.com/tls/server.crt"
+CLI_ORDERER_KEY="${CLI_CRYPTO}/ordererOrganizations/example.com/orderers/orderer0.example.com/tls/server.key"
 CLI_PEER_TLS="${CLI_CRYPTO}/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt"
 CLI_PEER_MSP="${CLI_CRYPTO}/peerOrganizations/org1.example.com/users/Admin@org1.example.com/msp"
 
-# ── Step 4: Create channel ───────────────────────────────────────────────────
+# ── Step 4: Create channel (all orderers must join for Raft consensus) ───────
 echo "[4/7] Creating channel '${CHANNEL_NAME}' via osnadmin (inside CLI container)..."
+
+# Join orderer0
 docker exec cli osnadmin channel join \
   --channelID ${CHANNEL_NAME} \
   --config-block "${CLI_ARTIFACTS}/${CHANNEL_NAME}.block" \
-  -o orderer.example.com:7053 \
+  -o orderer0.example.com:7053 \
   --ca-file "${CLI_ORDERER_CA}" \
   --client-cert "${CLI_ORDERER_CERT}" \
   --client-key "${CLI_ORDERER_KEY}"
+
+# Join orderer1
+docker exec cli osnadmin channel join \
+  --channelID ${CHANNEL_NAME} \
+  --config-block "${CLI_ARTIFACTS}/${CHANNEL_NAME}.block" \
+  -o orderer1.example.com:8053 \
+  --ca-file "${CLI_CRYPTO}/ordererOrganizations/example.com/orderers/orderer1.example.com/tls/ca.crt" \
+  --client-cert "${CLI_CRYPTO}/ordererOrganizations/example.com/orderers/orderer1.example.com/tls/server.crt" \
+  --client-key "${CLI_CRYPTO}/ordererOrganizations/example.com/orderers/orderer1.example.com/tls/server.key"
+
+# Join orderer2
+docker exec cli osnadmin channel join \
+  --channelID ${CHANNEL_NAME} \
+  --config-block "${CLI_ARTIFACTS}/${CHANNEL_NAME}.block" \
+  -o orderer2.example.com:9053 \
+  --ca-file "${CLI_CRYPTO}/ordererOrganizations/example.com/orderers/orderer2.example.com/tls/ca.crt" \
+  --client-cert "${CLI_CRYPTO}/ordererOrganizations/example.com/orderers/orderer2.example.com/tls/server.crt" \
+  --client-key "${CLI_CRYPTO}/ordererOrganizations/example.com/orderers/orderer2.example.com/tls/server.key"
+
+echo "  Waiting for Raft leader election..."
+sleep 5
 echo "  Done."
 
 # ── Step 5: Peer joins channel ───────────────────────────────────────────────
-echo "[5/7] Peer joining channel (inside CLI container)..."
+echo "[5/7] Peers joining channel (inside CLI container)..."
+
+# Org1 joins
 docker exec \
   -e CORE_PEER_TLS_ENABLED=true \
   -e CORE_PEER_LOCALMSPID=Org1MSP \
@@ -113,7 +141,7 @@ docker exec \
   cli \
   peer channel join -b "${CLI_ARTIFACTS}/${CHANNEL_NAME}.block"
 
-echo "  Anchor peer set via genesis block (skipping deprecated update tx)."
+echo "  Org1 peer successfully joined channel."
 echo "  Done."
 
 # ── Step 6: Package, install, approve, commit chaincode ─────────────────────
@@ -176,7 +204,7 @@ docker exec \
     --package-id "${PACKAGE_ID}" \
     --sequence ${CHAINCODE_SEQUENCE} \
     --collections-config "${CLI_COLLECTIONS}" \
-    -o orderer.example.com:7050 \
+    -o orderer0.example.com:7050 \
     --tls --cafile "${CLI_ORDERER_CA}"
 
 # Commit
@@ -193,7 +221,7 @@ docker exec \
     -v ${CHAINCODE_VERSION} \
     --sequence ${CHAINCODE_SEQUENCE} \
     --collections-config "${CLI_COLLECTIONS}" \
-    -o orderer.example.com:7050 \
+    -o orderer0.example.com:7050 \
     --tls --cafile "${CLI_ORDERER_CA}" \
     --peerAddresses peer0.org1.example.com:7051 \
     --tlsRootCertFiles "${CLI_PEER_TLS}"
@@ -210,7 +238,7 @@ docker exec \
     -C ${CHANNEL_NAME} \
     -n ${CHAINCODE_NAME} \
     -c '{"function":"InitLedger","Args":[]}' \
-    -o orderer.example.com:7050 \
+    -o orderer0.example.com:7050 \
     --tls --cafile "${CLI_ORDERER_CA}" \
     --peerAddresses peer0.org1.example.com:7051 \
     --tlsRootCertFiles "${CLI_PEER_TLS}"

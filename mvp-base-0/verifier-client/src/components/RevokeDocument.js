@@ -1,6 +1,9 @@
 import React, { useState } from "react";
 import { ethers } from "ethers";
+import axios from "axios";
 import { CONTRACT_ADDRESS, ABI, SEPOLIA_RPC_URL } from "../config/contract";
+
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 /**
  * Compute SHA-256 hash of a File entirely in the browser using SubtleCrypto.
@@ -25,13 +28,14 @@ function formatTimestamp(unixSeconds) {
 /**
  * RevokeDocument
  *
- * Owner-only panel. Looks up a document on-chain (by file upload or manual hash),
- * shows a confirmation preview with issuer details, then calls revokeDocument()
- * via MetaMask. Non-owner attempts are caught with a clear error.
+ * Admin panel for revoking documents on Ethereum or Fabric.
+ * - Ethereum: Uses MetaMask for wallet-based revocation
+ * - Fabric: Uses backend API with JWT authentication
  *
- * Also exposes pause / unpause / transferOwnership controls for the contract owner.
+ * Also exposes pause / unpause / transferOwnership controls (Ethereum only).
  */
-function RevokeDocument() {
+function RevokeDocument({ network = "ethereum" }) {
+  const isFabric = network === "fabric";
   const [inputMode, setInputMode] = useState("file"); // "file" | "hash"
   const [file, setFile]           = useState(null);
   const [hashInput, setHashInput] = useState("");
@@ -39,6 +43,13 @@ function RevokeDocument() {
   const [message, setMessage]     = useState("");
   const [preview, setPreview]     = useState(null);  // { docHash, issuer, timestamp }
   const [txHash, setTxHash]       = useState("");
+
+  // Fabric authentication state
+  const [adminToken, setAdminToken]   = useState(null);
+  const [username, setUsername]       = useState("");
+  const [password, setPassword]       = useState("");
+  const [authStage, setAuthStage]     = useState("idle"); // idle | logging_in | logged_in | error
+  const [authMessage, setAuthMessage] = useState("");
 
   // ── Admin controls (pause/unpause/transferOwnership) ─────────────────────
   const [adminStage, setAdminStage]     = useState("idle");
@@ -99,74 +110,173 @@ function RevokeDocument() {
     setMessage("Looking up document on-chain…");
 
     try {
-      let provider;
-      if (window.ethereum) {
-        provider = new ethers.BrowserProvider(window.ethereum);
-      } else {
-        provider = new ethers.JsonRpcProvider(SEPOLIA_RPC_URL);
-      }
+      if (isFabric) {
+        // Query Fabric via backend API
+        const res = await axios.get(`${API_URL}/api/fabric/document/${docHash}`);
+        const doc = res.data;
 
-
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
-
-      let issuer, timestamp;
-      try {
-        [issuer, timestamp] = await contract.verifyDocument(docHash);
-      } catch (err) {
-        const msg = (err?.reason ?? err?.message ?? "").toLowerCase();
-        if (msg.includes("document not verified") || msg.includes("execution reverted")) {
+        if (doc.revoked) {
           setStage("error");
-          setMessage("No on-chain record found for this hash. It may not have been issued through this system.");
+          setMessage("This document is already revoked on Fabric.");
           return;
         }
-        throw err;
-      }
 
-      const alreadyRevoked = await contract.isRevoked(docHash);
-      if (alreadyRevoked) {
-        setStage("error");
-        setMessage("This document is already revoked on-chain.");
-        return;
-      }
+        setPreview({
+          docHash: doc.docHash,
+          issuer: doc.issuer,
+          timestamp: new Date(doc.timestamp).getTime() / 1000 // Convert to seconds
+        });
+        setStage("confirming");
+        setMessage("");
+      } else {
+        // Ethereum: Query via ethers.js (existing logic)
+        let provider;
+        if (window.ethereum) {
+          provider = new ethers.BrowserProvider(window.ethereum);
+        } else {
+          provider = new ethers.JsonRpcProvider(SEPOLIA_RPC_URL);
+        }
 
-      setPreview({ docHash, issuer, timestamp: Number(timestamp) });
-      setStage("confirming");
-      setMessage("");
+        const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
+
+        let issuer, timestamp;
+        try {
+          [issuer, timestamp] = await contract.verifyDocument(docHash);
+        } catch (err) {
+          const msg = (err?.reason ?? err?.message ?? "").toLowerCase();
+          if (msg.includes("document not verified") || msg.includes("execution reverted")) {
+            setStage("error");
+            setMessage("No on-chain record found for this hash. It may not have been issued through this system.");
+            return;
+          }
+          throw err;
+        }
+
+        const alreadyRevoked = await contract.isRevoked(docHash);
+        if (alreadyRevoked) {
+          setStage("error");
+          setMessage("This document is already revoked on-chain.");
+          return;
+        }
+
+        setPreview({ docHash, issuer, timestamp: Number(timestamp) });
+        setStage("confirming");
+        setMessage("");
+      }
     } catch (err) {
       setStage("error");
-      setMessage(`Blockchain lookup failed: ${err.message}`);
+      if (err.response?.status === 404) {
+        setMessage(`Document not found on ${isFabric ? 'Fabric' : 'Ethereum'} network.`);
+      } else {
+        setMessage(`Lookup failed: ${err.response?.data?.error || err.message}`);
+      }
     }
   };
 
   const handleRevoke = async () => {
     if (!preview) return;
-    try {
-      const signer   = await getSignerOnSepolia();
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
 
-      setStage("waiting");
-      setMessage("Transaction submitted. Waiting for Sepolia confirmation…");
+    if (isFabric) {
+      // Fabric: Use backend API with JWT token
+      if (!adminToken) {
+        setStage("error");
+        setMessage("Please log in as admin first to revoke on Fabric network.");
+        return;
+      }
 
-      const tx = await contract.revokeDocument(preview.docHash);
-      await tx.wait();
+      try {
+        setStage("waiting");
+        setMessage("Submitting revocation to Fabric network…");
 
-      setTxHash(tx.hash);
-      setStage("success");
-      setMessage("Document revoked successfully. It will now show as ⚠ REVOKED to all verifiers.");
-    } catch (err) {
-      setStage("error");
-      const reason = err.reason || err.data?.message || err.message || "";
-      if (reason.toLowerCase().includes("not the contract owner")) {
-        setMessage("Revocation failed: the connected wallet is not the contract owner.");
-      } else if (reason.toLowerCase().includes("user rejected")) {
-        setMessage("Transaction cancelled in MetaMask.");
-      } else {
-        setMessage(reason || "An unexpected error occurred.");
+        await axios.post(
+          `${API_URL}/api/fabric/revoke`,
+          { docHash: preview.docHash },
+          { headers: { Authorization: `Bearer ${adminToken}` } }
+        );
+
+        setStage("success");
+        setMessage(`Document revoked successfully on Fabric network.`);
+        setTxHash(""); // No tx hash for Fabric
+      } catch (err) {
+        setStage("error");
+        if (err.response?.status === 401) {
+          setMessage("Authentication failed. Please log in again.");
+          setAdminToken(null);
+          setAuthStage("idle");
+        } else {
+          const reason = err.response?.data?.error || err.message;
+          setMessage(`Revocation failed: ${reason}`);
+        }
+      }
+    } else {
+      // Ethereum: Use MetaMask (existing logic)
+      try {
+        const signer   = await getSignerOnSepolia();
+        const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+
+        setStage("waiting");
+        setMessage("Transaction submitted. Waiting for Sepolia confirmation…");
+
+        const tx = await contract.revokeDocument(preview.docHash);
+        await tx.wait();
+
+        setTxHash(tx.hash);
+        setStage("success");
+        setMessage("Document revoked successfully. It will now show as ⚠ REVOKED to all verifiers.");
+      } catch (err) {
+        setStage("error");
+        const reason = err.reason || err.data?.message || err.message || "";
+        if (reason.toLowerCase().includes("only the document issuer")) {
+          setMessage("Revocation failed: you can only revoke documents you anchored.");
+        } else if (reason.toLowerCase().includes("user rejected")) {
+          setMessage("Transaction cancelled in MetaMask.");
+        } else {
+          setMessage(reason || "An unexpected error occurred.");
+        }
       }
     }
   };
 
   // ── Admin control handlers (pause / unpause / transfer) ───────────────────
+
+  // Fabric admin login handler
+  const handleLogin = async () => {
+    if (!username || !password) {
+      setAuthStage("error");
+      setAuthMessage("Please enter username and password.");
+      return;
+    }
+
+    setAuthStage("logging_in");
+    setAuthMessage("Authenticating...");
+
+    try {
+      const res = await axios.post(`${API_URL}/api/auth/login`, {
+        username,
+        password
+      });
+
+      setAdminToken(res.data.token);
+      setAuthStage("logged_in");
+      setAuthMessage("✓ Logged in as admin");
+      console.log("[Auth] Logged in successfully");
+    } catch (err) {
+      setAuthStage("error");
+      if (err.response?.status === 401) {
+        setAuthMessage("Invalid username or password.");
+      } else {
+        setAuthMessage(err.response?.data?.error || err.message || "Login failed.");
+      }
+    }
+  };
+
+  const handleLogout = () => {
+    setAdminToken(null);
+    setUsername("");
+    setPassword("");
+    setAuthStage("idle");
+    setAuthMessage("");
+  };
 
   const runAdminTx = async (action) => {
     setAdminStage("waiting");
@@ -212,11 +322,69 @@ function RevokeDocument() {
 
   return (
     <div className="panel">
-      <h2>Admin Panel</h2>
+      <h2>Admin Panel {isFabric && "(Fabric Network)"}</h2>
       <p className="panel-description">
-        Owner-only operations: revoke documents, pause/unpause new issuance, and transfer contract
-        ownership. All actions require the contract owner's wallet in MetaMask.
+        {isFabric
+          ? "Revoke documents on Hyperledger Fabric. Admin authentication required."
+          : "You can revoke documents you anchored. Admin functions (pause/unpause) require the contract owner's wallet."}
       </p>
+
+      {/* ─── Fabric Admin Login Section ──────────────────────────────── */}
+      {isFabric && authStage !== "logged_in" && (
+        <div className="revoke-confirm-box" style={{ marginBottom: "20px" }}>
+          <p className="revoke-confirm-title">Admin Login Required</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <input
+              type="text"
+              className="hash-input"
+              placeholder="Username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              disabled={authStage === "logging_in"}
+            />
+            <input
+              type="password"
+              className="hash-input"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyPress={(e) => e.key === "Enter" && handleLogin()}
+              disabled={authStage === "logging_in"}
+            />
+            <button
+              className="btn btn-secondary"
+              onClick={handleLogin}
+              disabled={authStage === "logging_in"}
+            >
+              {authStage === "logging_in" ? "Logging in..." : "Login"}
+            </button>
+          </div>
+
+          {authMessage && (
+            <div className={`status-box ${authStage === "error" ? "status-error" : "status-success"}`} style={{ marginTop: "12px" }}>
+              <span className="status-dot" />
+              <p className="status-message">{authMessage}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Show logout button when logged in to Fabric */}
+      {isFabric && authStage === "logged_in" && (
+        <div style={{ marginBottom: "16px" }}>
+          <div className="status-box status-success">
+            <span className="status-dot" />
+            <p className="status-message">{authMessage}</p>
+          </div>
+          <button
+            className="btn btn-secondary"
+            onClick={handleLogout}
+            style={{ marginTop: "10px" }}
+          >
+            Logout
+          </button>
+        </div>
+      )}
 
       {/* ─── Section: Revoke Document ──────────────────────────────────── */}
       <p className="result-section-title" style={{ marginBottom: "12px" }}>Revoke a Document</p>
@@ -295,13 +463,17 @@ function RevokeDocument() {
           <div className="result-row">
             <span className="result-label">Issuer</span>
             <span className="result-value">
-              <a
-                href={`https://sepolia.etherscan.io/address/${preview.issuer}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {formatAddress(preview.issuer)}
-              </a>
+              {isFabric ? (
+                preview.issuer
+              ) : (
+                <a
+                  href={`https://sepolia.etherscan.io/address/${preview.issuer}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {formatAddress(preview.issuer)}
+                </a>
+              )}
             </span>
           </div>
           <div className="result-row">
@@ -323,7 +495,7 @@ function RevokeDocument() {
           <span className="status-dot" />
           <div>
             <p className="status-message">{message}</p>
-            {txHash && (
+            {txHash && !isFabric && (
               <p className="status-detail">
                 <span>Tx:</span>
                 <a
@@ -339,50 +511,54 @@ function RevokeDocument() {
         </div>
       )}
 
-      {/* ─── Section: Contract Controls ────────────────────────────────── */}
-      <div className="result-divider" style={{ margin: "28px 0 20px" }} />
-      <p className="result-section-title" style={{ marginBottom: "14px" }}>Contract Controls</p>
+      {/* ─── Section: Contract Controls (Ethereum only) ────────────────────────────────── */}
+      {!isFabric && (
+        <>
+          <div className="result-divider" style={{ margin: "28px 0 20px" }} />
+          <p className="result-section-title" style={{ marginBottom: "14px" }}>Contract Controls</p>
 
-      <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "16px" }}>
-        <button className="btn btn-secondary" onClick={() => runAdminTx("pause")}>
-          ⏸ Pause Issuance
-        </button>
-        <button className="btn btn-secondary" onClick={() => runAdminTx("unpause")}>
-          ▶ Unpause Issuance
-        </button>
-      </div>
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "16px" }}>
+            <button className="btn btn-secondary" onClick={() => runAdminTx("pause")}>
+              ⏸ Pause Issuance
+            </button>
+            <button className="btn btn-secondary" onClick={() => runAdminTx("unpause")}>
+              ▶ Unpause Issuance
+            </button>
+          </div>
 
-      <div className="hash-input-row">
-        <input
-          type="text"
-          className="hash-input"
-          placeholder="New owner address (0x…)"
-          value={newOwnerInput}
-          onChange={(e) => { setNewOwnerInput(e.target.value); setAdminStage("idle"); setAdminMessage(""); }}
-        />
-        <button className="btn btn-danger" onClick={() => runAdminTx("transfer")}>
-          Transfer Ownership
-        </button>
-      </div>
+          <div className="hash-input-row">
+            <input
+              type="text"
+              className="hash-input"
+              placeholder="New owner address (0x…)"
+              value={newOwnerInput}
+              onChange={(e) => { setNewOwnerInput(e.target.value); setAdminStage("idle"); setAdminMessage(""); }}
+            />
+            <button className="btn btn-danger" onClick={() => runAdminTx("transfer")}>
+              Transfer Ownership
+            </button>
+          </div>
 
-      {/* Admin status */}
-      {adminStage === "waiting" && (
-        <div className="status-box status-analyzing" style={{ marginTop: "14px" }}>
-          <span className="status-dot" />
-          <p className="status-message">{adminMessage}</p>
-        </div>
-      )}
-      {adminStage === "success" && (
-        <div className="status-box status-success" style={{ marginTop: "14px" }}>
-          <span className="status-dot" />
-          <p className="status-message">{adminMessage}</p>
-        </div>
-      )}
-      {adminStage === "error" && (
-        <div className="status-box status-error" style={{ marginTop: "14px" }}>
-          <span className="status-dot" />
-          <p className="status-message">{adminMessage}</p>
-        </div>
+          {/* Admin status */}
+          {adminStage === "waiting" && (
+            <div className="status-box status-analyzing" style={{ marginTop: "14px" }}>
+              <span className="status-dot" />
+              <p className="status-message">{adminMessage}</p>
+            </div>
+          )}
+          {adminStage === "success" && (
+            <div className="status-box status-success" style={{ marginTop: "14px" }}>
+              <span className="status-dot" />
+              <p className="status-message">{adminMessage}</p>
+            </div>
+          )}
+          {adminStage === "error" && (
+            <div className="status-box status-error" style={{ marginTop: "14px" }}>
+              <span className="status-dot" />
+              <p className="status-message">{adminMessage}</p>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

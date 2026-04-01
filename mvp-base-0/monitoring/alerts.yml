@@ -1,0 +1,251 @@
+groups:
+  - name: fabric_network_alerts
+    interval: 30s
+    rules:
+      # Critical: Orderer down
+      - alert: OrdererDown
+        expr: up{job=~"orderer[0-2]"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: orderer
+        annotations:
+          summary: "Orderer {{ $labels.instance }} is DOWN"
+          description: "Orderer {{ $labels.orderer_id }} ({{ $labels.instance }}) has been unreachable for 2 minutes"
+          runbook: "https://fabric.example.com/runbook/orderer-down"
+
+      # Critical: Raft cluster unhealthy (less than 2 orderers responding)
+      - alert: RaftClusterUnhealthy
+        expr: count(up{job=~"orderer[0-2]"} == 1) < 2
+        for: 1m
+        labels:
+          severity: critical
+          service: orderer
+        annotations:
+          summary: "Raft cluster UNHEALTHY - Less than quorum orderers responding"
+          description: "{{ $value }} orderers are up out of 3 required. Network may not be able to reach consensus."
+          action: "Immediately investigate and restart failed orderer(s)"
+
+      # Critical: Peer down
+      - alert: PeerDown
+        expr: up{job=~"peer-org[1-3]"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: peer
+        annotations:
+          summary: "Peer {{ $labels.instance }} is DOWN"
+          description: "{{ $labels.organization }} peer ({{ $labels.instance }}) has been unreachable for 2 minutes. This organization may not be able to endorse transactions."
+          runbook: "https://fabric.example.com/runbook/peer-down"
+
+      # Warning: High peer endorsement latency
+      - alert: HighEndorsementLatency
+        expr: histogram_quantile(0.95, rate(endorsement_duration_seconds_bucket{job=~"peer-org[1-3]"}[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: peer
+        annotations:
+          summary: "High endorsement latency on {{ $labels.instance }}"
+          description: "P95 endorsement latency is {{ $value }}s (threshold: 2s) on {{ $labels.organization }}"
+          recommendation: "Check peer CPU/memory usage, check for slow chaincode execution"
+
+      # Warning: High chaincode execution latency
+      - alert: SlowChaincodeExecution
+        expr: histogram_quantile(0.95, rate(chaincode_duration_seconds_bucket{job=~"peer-org[1-3]"}[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: chaincode
+        annotations:
+          summary: "Slow chaincode execution on {{ $labels.instance }}"
+          description: "P95 chaincode duration is {{ $value }}s (threshold: 5s). Verify chaincode logic and database queries."
+          runbook: "https://fabric.example.com/runbook/slow-chaincode"
+
+      # Warning: High block commit latency
+      - alert: HighBlockCommitLatency
+        expr: histogram_quantile(0.95, rate(block_commit_duration_seconds_bucket{job=~"peer-org[1-3]"}[5m])) > 3
+        for: 5m
+        labels:
+          severity: warning
+          service: peer
+        annotations:
+          summary: "High block commit latency on {{ $labels.instance }}"
+          description: "P95 block commit time is {{ $value }}s on {{ $labels.organization }}"
+
+      # Critical: Ledger height divergence (peer out of sync)
+      - alert: LedgerHeightDivergence
+        expr: |
+          max(ledger_blockchain_height{job=~"peer-org[1-3]"}) -
+          min(ledger_blockchain_height{job=~"peer-org[1-3]"}) > 5
+        for: 3m
+        labels:
+          severity: critical
+          service: peer
+        annotations:
+          summary: "Ledger height divergence detected across peers"
+          description: "Peers have diverged in block height by {{ $value }} blocks. Some peers are out of sync with the network."
+          action: "Investigate peer connectivity and restart out-of-sync peers"
+
+      # Warning: High transaction rejection rate
+      - alert: HighTransactionRejectionRate
+        expr: |
+          (
+            rate(broadcast_processed_count{status="REJECTED"}[5m]) /
+            (rate(broadcast_processed_count{status="SUCCESS"}[5m]) +
+             rate(broadcast_processed_count{status="REJECTED"}[5m]))
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: orderer
+        annotations:
+          summary: "High transaction rejection rate on {{ $labels.instance }}"
+          description: "Rejection rate is {{ $value | humanizePercentage }} (threshold: 5%). Verify transaction validity."
+
+      # Warning: CPU saturation
+      - alert: HighCPUUsage
+        expr: (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) by (instance)) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU is {{ $value | humanizePercentage }} utilized. Consider scaling or optimizing."
+
+      # Critical: Memory pressure
+      - alert: HighMemoryUsage
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.85
+        for: 5m
+        labels:
+          severity: critical
+          service: system
+        annotations:
+          summary: "Critical memory usage on {{ $labels.instance }}"
+          description: "Memory is {{ $value | humanizePercentage }} utilized. System may become unstable."
+          action: "Immediately review memory usage and restart services if needed"
+
+      # Critical: Disk space low
+      - alert: DiskSpaceVeryLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/",fstype!="tmpfs"} /
+           node_filesystem_size_bytes{mountpoint="/",fstype!="tmpfs"}) < 0.1
+        for: 5m
+        labels:
+          severity: critical
+          service: system
+        annotations:
+          summary: "Critical disk space on {{ $labels.instance }}"
+          description: "Only {{ $value | humanizePercentage }} disk space remaining. Cleanup or scale immediately."
+          action: "Delete old logs, increase disk, or migrate data urgently"
+
+      # Warning: Disk space filling up
+      - alert: DiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/",fstype!="tmpfs"} /
+           node_filesystem_size_bytes{mountpoint="/",fstype!="tmpfs"}) < 0.2
+        for: 10m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Only {{ $value | humanizePercentage }} disk space available. Plan for cleanup."
+
+      # Backend API health issues
+      - alert: BackendAPIDown
+        expr: up{job="backend-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: backend
+        annotations:
+          summary: "Backend API is DOWN"
+          description: "Backend API has been unreachable for 2 minutes. Clients cannot anchor documents. Restart: docker-compose restart backend"
+
+      # High API latency
+      - alert: HighAPILatency
+        expr: |
+          histogram_quantile(0.95, http_request_duration_seconds_bucket{job="backend-api"}) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: backend
+        annotations:
+          summary: "High API latency"
+          description: "P95 API response time is {{ $value }}s. May indicate backend or blockchain bottleneck."
+
+      # High API error rate
+      - alert: HighAPIErrorRate
+        expr: |
+          (
+            increase(http_requests_total{job="backend-api", status=~"5.."}[5m]) /
+            increase(http_requests_total{job="backend-api"}[5m])
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          service: backend
+        annotations:
+          summary: "High API error rate"
+          description: "Error rate is {{ $value | humanizePercentage }}. Check backend and Fabric logs."
+
+  - name: fabric_capacity_alerts
+    interval: 60s
+    rules:
+      # Warning: Chaincode container resource limits approaching
+      - alert: ChaincodeContainerMemoryHigh
+        expr: |
+          (container_memory_usage_bytes{name=~"dev-peer.*"} /
+           container_spec_memory_limit_bytes{name=~"dev-peer.*"}) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          service: chaincode
+        annotations:
+          summary: "Chaincode container high memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }} of limit. Container may be killed."
+
+      # Info: Document anchoring capacity tracking
+      - alert: HighDocumentAnchoringRate
+        expr: rate(fabric_documents_anchored_total[5m]) > 100
+        for: 5m
+        labels:
+          severity: info
+          service: metrics
+        annotations:
+          summary: "High document anchoring rate"
+          description: "{{ $value | humanize }}/sec documents being anchored"
+
+  - name: fabric_sla_alerts
+    interval: 30s
+    rules:
+      # Track availability SLA (target: 99.9%)
+      - alert: AveragingLowEndorsementSuccessRate
+        expr: |
+          (
+            rate(endorsement_success_total[1h]) /
+            (rate(endorsement_success_total[1h]) +
+             rate(endorsement_failure_total[1h]))
+          ) < 0.99
+        for: 1h
+        labels:
+          severity: warning
+          sla: '99.9% availability'
+        annotations:
+          summary: "SLA Risk: Endorsement success rate below 99%"
+          description: "1-hour success rate is {{ $value | humanizePercentage }}. May impact SLA compliance."
+
+      # Track ordering latency SLA (target: P99 < 500ms)
+      - alert: SLABreach_OrderingLatency
+        expr: |
+          histogram_quantile(0.99, rate(broadcast_enqueue_duration_bucket[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          sla: 'P99 < 500ms'
+        annotations:
+          summary: "SLA Breach: Ordering latency P99 > 500ms"
+          description: "Ordering P99 latency is {{ $value }}s. SLA target: 500ms"

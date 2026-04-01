@@ -19,23 +19,96 @@ function printCertificate({ docHash, onChain, offChain }) {
 <head>
   <meta charset="UTF-8" />
   <title>Verification Certificate</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: Inter, 'Segoe UI', sans-serif; color: #1a1a2e; background: #fff; padding: 40px; max-width: 760px; margin: 0 auto; }
-    .cert-header { text-align: center; border-bottom: 3px double #1a1a2e; padding-bottom: 20px; margin-bottom: 28px; }
-    .cert-logo { font-size: 1.8rem; font-weight: 700; letter-spacing: -0.5px; color: #1a6ef5; }
-    .cert-title { font-size: 1.1rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; margin-top: 6px; }
-    .cert-subtitle { font-size: 0.8rem; color: #555; margin-top: 4px; }
-    .section { margin-bottom: 22px; }
-    .section-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #888; border-bottom: 1px solid #ddd; padding-bottom: 4px; margin-bottom: 10px; }
-    .row { display: flex; gap: 8px; padding: 5px 0; font-size: 0.875rem; border-bottom: 1px solid #f0f0f0; }
+    body { 
+      font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+      color: #09090b; 
+      background: #ffffff; 
+      padding: 64px; 
+      max-width: 760px; 
+      margin: 0 auto;
+      font-size: 15px;
+      line-height: 1.6;
+      letter-spacing: -0.01em;
+    }
+    .cert-header { 
+      text-align: center; 
+      padding-bottom: 40px; 
+      margin-bottom: 48px; 
+    }
+    .cert-logo { 
+      font-size: 1.75rem; 
+      font-weight: 600; 
+      letter-spacing: -0.04em; 
+      color: #09090b;
+    }
+    .cert-title { 
+      font-size: 0.9375rem; 
+      font-weight: 500; 
+      text-transform: uppercase; 
+      letter-spacing: 0.08em; 
+      margin-top: 16px; 
+      color: #52525b;
+    }
+    .cert-subtitle { 
+      font-size: 0.8125rem; 
+      color: #a1a1aa; 
+      margin-top: 8px; 
+    }
+    .section { 
+      margin-bottom: 40px; 
+      padding: 32px;
+      background: #f4f4f5;
+    }
+    .section-title { 
+      font-size: 0.75rem; 
+      font-weight: 600; 
+      text-transform: uppercase; 
+      letter-spacing: 0.1em; 
+      color: #a1a1aa; 
+      padding-bottom: 16px; 
+      margin-bottom: 20px; 
+      border-bottom: 1px solid #e4e4e7;
+    }
+    .row { 
+      display: grid;
+      grid-template-columns: 160px 1fr; 
+      gap: 24px; 
+      padding: 14px 0; 
+      font-size: 0.9375rem; 
+      border-bottom: 1px solid #e4e4e7; 
+    }
     .row:last-child { border-bottom: none; }
-    .label { width: 170px; flex-shrink: 0; color: #555; font-weight: 600; }
-    .value { color: #1a1a2e; word-break: break-all; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 0.82rem; }
-    .value.normal { font-family: inherit; font-size: 0.875rem; }
-    .disclaimer { margin-top: 28px; padding: 16px; background: #f8f8f8; border-left: 4px solid #1a6ef5; font-size: 0.8rem; color: #444; line-height: 1.6; }
-    .cert-footer { margin-top: 32px; text-align: center; font-size: 0.72rem; color: #aaa; border-top: 1px solid #ddd; padding-top: 16px; }
+    .label { 
+      color: #71717a; 
+      font-weight: 500;
+      font-size: 0.8125rem;
+    }
+    .value { 
+      color: #09090b; 
+      word-break: break-all; 
+      font-size: 0.8125rem; 
+    }
+    .value.normal { font-size: 0.9375rem; }
+    .disclaimer { 
+      margin-top: 48px; 
+      padding: 32px; 
+      background: #f4f4f5; 
+      font-size: 0.875rem; 
+      color: #52525b; 
+      line-height: 1.8;
+    }
+    .cert-footer { 
+      margin-top: 48px; 
+      text-align: center; 
+      font-size: 0.8125rem; 
+      color: #a1a1aa; 
+      padding-top: 32px; 
+      letter-spacing: 0.02em;
+    }
     @media print { body { padding: 20mm; } button { display: none !important; } }
   </style>
 </head>
@@ -43,7 +116,7 @@ function printCertificate({ docHash, onChain, offChain }) {
   <div class="cert-header">
     <div class="cert-logo">DocVerify</div>
     <div class="cert-title">Digital Document Verification Certificate</div>
-    <div class="cert-subtitle">Blockchain Integrity Proof &mdash; Ethereum Sepolia Testnet</div>
+    <div class="cert-subtitle">Blockchain Integrity Proof — Ethereum Sepolia Testnet</div>
   </div>
 
   <div class="section">
@@ -70,7 +143,7 @@ function printCertificate({ docHash, onChain, offChain }) {
   <div class="section">
     <div class="section-title">Certificate Metadata</div>
     <div class="row"><span class="label">Generated At</span><span class="value normal">${now}</span></div>
-    <div class="row"><span class="label">Verification Status</span><span class="value normal">AUTHENTIC &mdash; Hash found on immutable ledger</span></div>
+    <div class="row"><span class="label">Verification Status</span><span class="value normal">AUTHENTIC — Hash found on immutable ledger</span></div>
   </div>
 
   <div class="disclaimer">
@@ -85,7 +158,7 @@ function printCertificate({ docHash, onChain, offChain }) {
   </div>
 
   <div class="cert-footer">
-    Generated by DocVerify &bull; Blockchain-Based Digital Content Authenticity System &bull; ${now}
+    Generated by DocVerify • Blockchain-Based Digital Content Authenticity System • ${now}
   </div>
 </body>
 </html>`;

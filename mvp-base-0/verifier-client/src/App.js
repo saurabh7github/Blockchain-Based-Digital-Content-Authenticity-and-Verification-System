@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, NavLink, Navigate } from "react-router-dom";
 import IssueDocument  from "./components/IssueDocument";
 import VerifyDocument from "./components/VerifyDocument";
 import RevokeDocument from "./components/RevokeDocument";
@@ -10,18 +10,18 @@ import "./App.css";
 // Inner layout — has access to router location for active-tab detection
 // ---------------------------------------------------------------------------
 function Layout({ network, setNetwork }) {
-  const location = useLocation();
-  const onAdminRoute = location.pathname === "/admin";
-
   return (
     <div className="app-container">
       <header className="app-header">
-        <h1 className="app-title">DocVerify</h1>
-        <p className="app-subtitle">Blockchain-powered document authenticity &amp; verification</p>
+        <div className="header-top">
+          <div className="header-branding">
+            <h1 className="app-title">DocVerify</h1>
+            <p className="app-subtitle">Blockchain-powered document authenticity &amp; verification</p>
+          </div>
+        </div>
 
-        {/* Network selector — only shown on Issue / Verify routes */}
-        {!onAdminRoute && (
-          <div className="network-toggle-row">
+        {/* Network selector */}
+        <div className="network-toggle-row">
             <span className="network-toggle-label">Ledger:</span>
             <div className="network-toggle">
               <button
@@ -38,7 +38,6 @@ function Layout({ network, setNetwork }) {
               </button>
             </div>
           </div>
-        )}
       </header>
 
       <nav className="tab-bar">
@@ -67,7 +66,7 @@ function Layout({ network, setNetwork }) {
           <Routes>
             <Route path="/issue"  element={<IssueDocument  network={network} />} />
             <Route path="/verify" element={<VerifyDocument network={network} />} />
-            <Route path="/admin"  element={<RevokeDocument />} />
+            <Route path="/admin"  element={<RevokeDocument network={network} />} />
             {/* Redirect root → /issue */}
             <Route path="/"       element={<Navigate to="/issue" replace />} />
             {/* Catch-all */}
@@ -80,7 +79,7 @@ function Layout({ network, setNetwork }) {
         {network === "fabric"
           ? "Hyperledger Fabric"
           : "Ethereum Sepolia Testnet"
-        } &bull; SHA-256 &bull; DocVerifier v3
+        } &bull; SHA-256 &bull; DocVerifier
       </footer>
     </div>
   );

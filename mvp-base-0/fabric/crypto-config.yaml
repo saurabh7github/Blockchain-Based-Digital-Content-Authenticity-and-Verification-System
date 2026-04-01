@@ -7,13 +7,31 @@ OrdererOrgs:
     Domain: example.com
     EnableNodeOUs: true
     Specs:
-      - Hostname: orderer
+      - Hostname: orderer0
+      - Hostname: orderer1
+      - Hostname: orderer2
 
 PeerOrgs:
   - Name: Org1
     Domain: org1.example.com
     EnableNodeOUs: true
     Template:
+      Count: 2          # peer0, peer1 (HA for host org)
+    Users:
+      Count: 2          # User1, User2 (in addition to Admin)
+
+  - Name: Org2
+    Domain: org2.example.com
+    EnableNodeOUs: true
+    Template:
       Count: 1          # peer0
     Users:
-      Count: 1          # User1 (in addition to the implied Admin)
+      Count: 1          # User1 (in addition to Admin)
+
+  - Name: Org3
+    Domain: org3.example.com
+    EnableNodeOUs: true
+    Template:
+      Count: 1          # peer0
+    Users:
+      Count: 1          # User1 (in addition to Admin)

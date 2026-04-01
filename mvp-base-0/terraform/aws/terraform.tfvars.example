@@ -1,0 +1,50 @@
+# terraform/aws/terraform.tfvars.example
+# Copy this file to terraform.tfvars and update values for your deployment
+
+# AWS Configuration
+aws_region  = "us-east-1"
+environment = "production"
+project_name = "docverifier-fabric"
+
+# Network Configuration
+vpc_cidr       = "10.0.0.0/16"
+public_subnets  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+private_subnets = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
+
+# Compute Configuration
+orderer_instance_type     = "t3.medium"
+peer_instance_type        = "t3.large"
+ca_instance_type          = "t3.small"
+backend_instance_type     = "t3.medium"
+monitoring_instance_type  = "t3.medium"
+enable_detailed_monitoring = true
+
+# Database Configuration
+db_username              = "admin"
+db_password              = "ChangeMe!SecurePassword123"  # CHANGE THIS!
+rds_instance_class       = "db.r5.large"
+rds_allocated_storage    = 100
+rds_multi_az             = true
+rds_backup_retention_days = 30
+rds_deletion_protection  = true
+
+# Storage Configuration
+backup_bucket_prefix    = "docverifier-backups"
+enable_backup_versioning = true
+backup_retention_days   = 90
+
+# Monitoring Configuration
+log_retention_days   = 30
+alert_email          = "ops@example.com"  # CHANGE THIS!
+kms_deletion_window_in_days = 10
+
+# SSH Configuration
+ssh_key_name = "your-existing-key-name"  # Or leave empty to create new key
+
+# Common Tags
+common_tags = {
+  Project   = "DocVerifier"
+  Component = "HyperledgerFabric"
+  Owner     = "your-team"
+  CostCenter = "engineering"
+}

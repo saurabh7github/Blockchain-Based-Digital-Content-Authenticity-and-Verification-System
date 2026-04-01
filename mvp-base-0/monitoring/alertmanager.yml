@@ -1,0 +1,116 @@
+global:
+  resolve_timeout: 5m
+  pagerduty_url: https://events.pagerduty.com/v2/enqueue
+
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+route:
+  receiver: 'default'
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 4h
+
+  # Critical alerts (severity=critical) route to multiple channels
+  routes:
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 5s
+      group_interval: 5s
+      repeat_interval: 30m
+      continue: true
+
+    # Raft cluster unhealthy - immediate escalation
+    - match_re:
+        alertname: 'RaftClusterUnhealthy|OrdererDown'
+      receiver: 'critical-orderer-alerts'
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 15m
+      continue: true
+
+    # Peer failures - immediate notification
+    - match_re:
+        alertname: 'PeerDown|LedgerHeightDivergence'
+      receiver: 'critical-peer-alerts'
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 15m
+      continue: true
+
+    # SLA-related alerts - business metrics
+    - match:
+        sla: '99.9% availability'
+      receiver: 'sla-alerts'
+      group_wait: 30s
+      repeat_interval: 2h
+
+    # Warning level alerts - standard routing
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 2h
+
+    # Info level alerts - digest notifications
+    - match:
+        severity: info
+      receiver: 'info-alerts'
+      group_wait: 60s
+      group_interval: 1h
+      repeat_interval: 6h
+
+receivers:
+  # Default receiver - alerts go here by default
+  - name: 'default'
+
+  # Critical alerts - Configure Slack, Email, or PagerDuty webhooks in production
+  # See MONITORING_SETUP.md for configuration instructions
+  - name: 'critical-alerts'
+
+  # Orderer-specific critical alerts
+  - name: 'critical-orderer-alerts'
+
+  # Peer-specific critical alerts
+  - name: 'critical-peer-alerts'
+
+  # SLA-related business alerts
+  - name: 'sla-alerts'
+
+  # Warning level alerts
+  - name: 'warning-alerts'
+
+  # Info level alerts
+  - name: 'info-alerts'
+
+inhibit_rules:
+  # Suppress peer alerts if orderer cluster is down
+  - source_match:
+      alertname: 'RaftClusterUnhealthy'
+    target_match:
+      service: 'peer'
+    equal: ['cluster']
+
+  # Suppress peer ledger divergence alerts if peer is already down
+  - source_match:
+      alertname: 'PeerDown'
+    target_match:
+      alertname: 'LedgerHeightDivergence'
+    equal: ['organization']
+
+  # Suppress latency warnings if service is down
+  - source_match:
+      alertname: 'PeerDown'
+    target_match_re:
+      alertname: '(HighEndorsementLatency|HighBlockCommitLatency)'
+    equal: ['instance']
+
+  # Suppress endorsement latency alerts if chaincode is slow
+  - source_match:
+      alertname: 'SlowChaincodeExecution'
+    target_match:
+      alertname: 'HighEndorsementLatency'
+    equal: ['instance']

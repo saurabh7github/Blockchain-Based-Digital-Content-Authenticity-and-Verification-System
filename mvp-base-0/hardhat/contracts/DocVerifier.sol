@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 /**
  * @title  DocVerifier
  * @notice Immutable registry for SHA-256 document fingerprints.
- *         Anyone can anchor a document; only the contract owner can revoke one.
+ *         Anyone can anchor a document; only the document issuer can revoke it.
  *
  * v3 additions vs v2:
  *   - `paused` state + pause() / unpause() for emergency stop.
@@ -112,12 +112,16 @@ contract DocVerifier {
 
     /**
      * @notice Marks a previously anchored document as revoked.
-     *         Revocation is irreversible and can only be done by the contract owner.
+     *         Revocation is irreversible and can only be done by the document's issuer.
      * @param  _docHash SHA-256 hash of the document to revoke.
      */
-    function revokeDocument(bytes32 _docHash) external onlyOwner {
+    function revokeDocument(bytes32 _docHash) external {
         require(documents[_docHash].timestamp != 0, "Document not found.");
         require(!documents[_docHash].revoked,        "Document already revoked.");
+        require(
+            msg.sender == documents[_docHash].issuer,
+            "Only the document issuer can revoke."
+        );
         documents[_docHash].revoked = true;
         emit DocumentRevoked(_docHash, msg.sender);
     }

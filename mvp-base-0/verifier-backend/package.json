@@ -24,7 +24,8 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.1.5",
     "multer": "^2.0.2",
-    "pdf-parse": "^2.4.5"
+    "pdf-parse": "^2.4.5",
+    "prom-client": "^15.1.0"
   },
   "devDependencies": {
     "jest": "^30.2.0",
